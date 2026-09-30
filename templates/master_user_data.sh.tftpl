@@ -101,45 +101,6 @@ test -f $SGE_ROOT/default/common/settings.sh
 echo ". $SGE_ROOT/default/common/settings.sh" > /etc/profile.d/ocs.sh
 . $SGE_ROOT/default/common/settings.sh
 
-qconf -am ec2-user
-
-# Global consumable limiting concurrent VS Code Remote sessions: each session
-# job requests -l vscode=1.
-cat > /tmp/vscode.centry <<'CENTRY'
-name        vscode
-shortcut    vscode
-type        INT
-relop       <=
-requestable YES
-consumable  YES
-default     0
-urgency     0
-CENTRY
-qconf -Ace /tmp/vscode.centry
-qconf -mattr exechost complex_values vscode=${max_sessions} global
-
-# Queue for JupyterHub sessions (JupyterLab and VS Code jobs). Interactive
-# sessions are mostly idle, so it has ${max_sessions} slots per worker on top of
-# all.q. The FORCED "interactive" complex keeps batch jobs out of it: only jobs
-# requesting -l interactive=true (the Hub's) can run there.
-cat > /tmp/interactive.centry <<'CENTRY'
-name        interactive
-shortcut    inter
-type        BOOL
-relop       ==
-requestable FORCED
-consumable  NO
-default     FALSE
-urgency     0
-CENTRY
-qconf -Ace /tmp/interactive.centry
-qconf -sq all.q | sed \
-  -e 's/^qname .*/qname                 interactive.q/' \
-  -e 's/^slots .*/slots                 ${max_sessions}/' \
-  -e 's/^complex_values .*/complex_values        interactive=TRUE/' \
-  > /tmp/interactive.q
-qconf -Aq /tmp/interactive.q
-
 # --- Shared application scripts (/opt/apps) ---
 mkdir -p /opt/apps/vscode-remote/slots
 chmod 1777 /opt/apps/vscode-remote/slots
@@ -159,8 +120,10 @@ chmod 755 /opt/apps/jupyterhub/job.sh
 install -d -o ec2-user -g ec2-user /home/ec2-user/vscode-remote
 
 # --- Share SGE_ROOT, /home and /opt/apps with the other nodes ---
-# Exported only after qmaster is installed, so the workers (which wait for
-# settings.sh on the share) never start their execd install too early.
+# Exported as soon as qmaster is installed and before the optional
+# configuration below, so a configuration problem can never leave the other
+# nodes without their shares. Workers still wait until qmaster answers
+# (qconf -sh) before installing execd.
 cat > /etc/exports <<EXPORTS
 $SGE_ROOT ${subnet_cidr}(rw,sync,no_root_squash,no_subtree_check)
 /home ${subnet_cidr}(rw,sync,no_root_squash,no_subtree_check)
@@ -168,3 +131,50 @@ $SGE_ROOT ${subnet_cidr}(rw,sync,no_root_squash,no_subtree_check)
 EXPORTS
 systemctl enable --now nfs-server
 exportfs -ra
+
+# --- Grid Engine configuration ---
+# qconf's exit codes are unreliable for changes (OCS 9.1.6 "qconf -Ace" exits 1
+# on success), so each change is run without set -e and then verified.
+qconf -am ec2-user || true
+qconf -sm | grep -qx ec2-user
+
+# Global consumable limiting concurrent VS Code sessions: each VS Code job
+# requests -l vscode=1.
+cat > /tmp/vscode.centry <<'CENTRY'
+name        vscode
+shortcut    vscode
+type        INT
+relop       <=
+requestable YES
+consumable  YES
+default     0
+urgency     0
+CENTRY
+qconf -Ace /tmp/vscode.centry || true
+qconf -sc | grep -q '^vscode '
+qconf -mattr exechost complex_values vscode=${max_sessions} global || true
+qconf -se global | grep -q 'vscode=${max_sessions}'
+
+# Queue for JupyterHub sessions (JupyterLab and VS Code jobs). Interactive
+# sessions are mostly idle, so it has ${max_sessions} slots per worker on top of
+# all.q. The FORCED "interactive" complex keeps batch jobs out of it: only jobs
+# requesting -l interactive=true (the Hub's) can run there.
+cat > /tmp/interactive.centry <<'CENTRY'
+name        interactive
+shortcut    inter
+type        BOOL
+relop       ==
+requestable FORCED
+consumable  NO
+default     FALSE
+urgency     0
+CENTRY
+qconf -Ace /tmp/interactive.centry || true
+qconf -sc | grep -q '^interactive '
+qconf -sq all.q | sed \
+  -e 's/^qname .*/qname                 interactive.q/' \
+  -e 's/^slots .*/slots                 ${max_sessions}/' \
+  -e 's/^complex_values .*/complex_values        interactive=TRUE/' \
+  > /tmp/interactive.q
+qconf -Aq /tmp/interactive.q || true
+qconf -sql | grep -qx interactive.q
