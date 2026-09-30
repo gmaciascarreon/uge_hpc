@@ -10,10 +10,12 @@ uses the same `qsub` / `qstat` / `qhost` / `qconf` commands. The cluster has:
 | `master` | `10.0.1.10` | qmaster, login/submit host, NFS server (`/opt/ocs`, `/home`) |
 | `node01` | `10.0.1.11` | execution host                                              |
 | `node02` | `10.0.1.12` | execution host                                              |
+| `jupyter` | `10.0.1.20` + Elastic IP | JupyterHub (JupyterLab + VS Code in the browser), submit host |
 
-All nodes are in a dedicated VPC and reachable only through AWS Systems
-Manager Session Manager. There is no inbound access from the internet and no
-AWS key pair. Inside the cluster, all traffic between nodes is allowed. The
+All nodes are in a dedicated VPC and have no AWS key pair. The only inbound
+access from the internet is HTTPS (443) to JupyterHub. You can restrict it with
+`jupyterhub_allowed_cidrs`. For shell access, use AWS Systems Manager Session
+Manager. Inside the cluster, all traffic between nodes is allowed. The
 `ec2-user` account has passwordless SSH between nodes, and its home
 directory is shared over NFS.
 
@@ -31,6 +33,8 @@ Optional variables ([variables.tf](variables.tf)):
 - `worker_count` (default `2`)
 - `master_instance_type` (default `t3.small`)
 - `worker_instance_type` (default `t3.medium`)
+- `jupyter_instance_type` (default `t3.medium`)
+- `jupyterhub_allowed_cidrs` (default `["0.0.0.0/0"]`, open to the internet)
 - `ocs_version` (default `9.1.6`)
 - `aws_region` (default `us-east-1`)
 
@@ -57,6 +61,24 @@ cat t1.o*                                     # after they finish: node01 / node
 ssh node01 hostname                           # passwordless SSH between nodes
 ```
 
+## JupyterHub and VS Code
+
+```sh
+terraform output jupyterhub_url           # https://<elastic-ip>
+terraform output -raw jupyterhub_password # user: ec2-user
+```
+
+1. Open the URL. The certificate is self-signed, so accept the browser
+   warning once. The connection is still encrypted.
+2. Log in as `ec2-user` with the generated password. JupyterLab opens.
+3. In the Launcher, click **VS Code** to open code-server in the browser.
+4. Notebooks, JupyterLab terminals and VS Code terminals share the cluster
+   home directory and can submit jobs: `qsub`, `qstat`, `qhost`.
+
+JupyterHub runs as the `jupyterhub` systemd service. Its config is
+`/etc/jupyterhub/jupyterhub_config.py`, and you can read its logs with
+`journalctl -u jupyterhub` on the `jupyter` node.
+
 ## Troubleshooting
 
 - Boot/install log on every node: `/var/log/cloud-init-output.log`
@@ -68,7 +90,8 @@ and qmaster answers, so they can be created in any order.
 
 ## Cost
 
-The cluster costs about $0.10/hour with the default instance types. Run
+The cluster costs about $0.15/hour with the default instance types, including
+the JupyterHub node and its Elastic IP. Run
 `terraform destroy` when you're done.
 
 ## Files
@@ -79,4 +102,6 @@ The cluster costs about $0.10/hour with the default instance types. Run
 - `ec2.tf`: security group, cluster SSH key, and the master and worker instances
 - `templates/master_user_data.sh.tftpl`: installs OCS qmaster and the NFS server
 - `templates/worker_user_data.sh.tftpl`: mounts the NFS shares and installs the OCS execd
+- `jupyterhub.tf`: JupyterHub instance, HTTPS security group, Elastic IP, self-signed certificate, login password
+- `templates/jupyterhub_user_data.sh.tftpl`: mounts the NFS shares and installs JupyterHub, JupyterLab and code-server
 - `variables.tf` / `outputs.tf`: inputs and outputs

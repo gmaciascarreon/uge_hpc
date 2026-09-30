@@ -13,7 +13,7 @@ cat >> /etc/hosts <<'HOSTS'
 ${hosts_entries}
 HOSTS
 
-dnf install -y nfs-utils libtirpc tar which hostname
+dnf install -y nfs-utils libtirpc tar which hostname git gcc
 
 # --- Passwordless SSH for ec2-user (home is NFS-shared with the workers) ---
 mkdir -p /home/ec2-user/.ssh
@@ -60,7 +60,7 @@ SPOOLING_METHOD="classic"
 DB_SPOOLING_DIR="$SGE_ROOT/default/spool/bdb"
 PAR_EXECD_INST_COUNT="20"
 ADMIN_HOST_LIST="master $WORKERS"
-SUBMIT_HOST_LIST="master $WORKERS"
+SUBMIT_HOST_LIST="master jupyter $WORKERS"
 EXEC_HOST_LIST="$WORKERS"
 EXECD_SPOOL_DIR_LOCAL="/var/spool/ocs"
 HOSTNAME_RESOLVING="true"

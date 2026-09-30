@@ -10,7 +10,7 @@ cat >> /etc/hosts <<'HOSTS'
 ${hosts_entries}
 HOSTS
 
-dnf install -y nfs-utils libtirpc tar which hostname
+dnf install -y nfs-utils libtirpc tar which hostname git gcc
 
 # --- Mount SGE_ROOT and /home from the master (retry until it exports them) ---
 mkdir -p $SGE_ROOT

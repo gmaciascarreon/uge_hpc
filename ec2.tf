@@ -13,9 +13,12 @@ locals {
     format("node%02d", i + 1) => cidrhost(var.public_subnet_cidr, 11 + i)
   }
 
+  jupyter_ip = cidrhost(var.public_subnet_cidr, 20)
+
   hosts_entries = join("\n", concat(
     ["${local.master_ip} master"],
-    [for name, ip in local.workers : "${ip} ${name}"]
+    [for name, ip in local.workers : "${ip} ${name}"],
+    ["${local.jupyter_ip} jupyter"]
   ))
 }
 

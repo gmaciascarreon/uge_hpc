@@ -45,6 +45,18 @@ variable "worker_count" {
   }
 }
 
+variable "jupyter_instance_type" {
+  description = "EC2 instance type for the JupyterHub node"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "jupyterhub_allowed_cidrs" {
+  description = "CIDR blocks allowed to reach JupyterHub over HTTPS (443). Narrow this to your own IP (e.g. [\"203.0.113.4/32\"]) if possible."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 variable "ocs_version" {
   description = "Open Cluster Scheduler release to install (prebuilt packages from open.clusterscheduler.io, 9.1.6 or newer)"
   type        = string

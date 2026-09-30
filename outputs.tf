@@ -22,8 +22,25 @@ output "ssm_connect_commands" {
   description = "AWS CLI commands to open a Session Manager shell on each instance"
   value = merge(
     { master = "aws ssm start-session --target ${aws_instance.master.id} --region ${var.aws_region}" },
+    { jupyter = "aws ssm start-session --target ${aws_instance.jupyterhub.id} --region ${var.aws_region}" },
     { for name, inst in aws_instance.workers : name => "aws ssm start-session --target ${inst.id} --region ${var.aws_region}" }
   )
+}
+
+output "jupyterhub_url" {
+  description = "Public JupyterHub URL (self-signed certificate: accept the browser warning)"
+  value       = "https://${aws_eip.jupyterhub.public_ip}"
+}
+
+output "jupyterhub_username" {
+  description = "JupyterHub login user"
+  value       = "ec2-user"
+}
+
+output "jupyterhub_password" {
+  description = "JupyterHub login password (terraform output -raw jupyterhub_password)"
+  value       = random_password.jupyterhub.result
+  sensitive   = true
 }
 
 output "cluster_ssh_private_key" {

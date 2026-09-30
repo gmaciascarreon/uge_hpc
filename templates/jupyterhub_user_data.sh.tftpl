@@ -1,0 +1,91 @@
+#!/bin/bash
+set -exo pipefail
+
+SGE_ROOT=/opt/ocs
+export HOME=/root
+
+# --- Hostname resolution (Grid Engine needs consistent names on every node) ---
+hostnamectl set-hostname jupyter
+echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
+cat >> /etc/hosts <<'HOSTS'
+${hosts_entries}
+HOSTS
+
+dnf install -y nfs-utils libtirpc tar which hostname git gcc \
+  python3.11 python3.11-pip nodejs npm
+
+# --- Mount SGE_ROOT and /home from the master (retry until it exports them) ---
+mkdir -p $SGE_ROOT
+cat >> /etc/fstab <<FSTAB
+master:$SGE_ROOT $SGE_ROOT nfs defaults,_netdev,nofail 0 0
+master:/home /home nfs defaults,_netdev,nofail 0 0
+FSTAB
+systemctl daemon-reload
+
+until mountpoint -q $SGE_ROOT; do mount $SGE_ROOT || sleep 15; done
+until mountpoint -q /home; do mount /home || sleep 15; done
+
+# Grid Engine client environment (this host is a submit host)
+echo ". $SGE_ROOT/default/common/settings.sh" > /etc/profile.d/ocs.sh
+
+# --- JupyterHub login: PAM as ec2-user ---
+set +x # keep the password out of the cloud-init log
+echo 'ec2-user:${password}' | chpasswd
+set -x
+
+# --- JupyterHub + JupyterLab + VS Code (code-server) ---
+npm install -g configurable-http-proxy
+
+python3.11 -m venv /opt/jupyterhub
+/opt/jupyterhub/bin/pip install --upgrade pip
+/opt/jupyterhub/bin/pip install jupyterhub jupyterlab notebook \
+  jupyter-server-proxy jupyter-vscode-proxy
+
+curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix=/usr/local
+
+mkdir -p /etc/jupyterhub/ssl
+cat > /etc/jupyterhub/ssl/cert.pem <<'CERT'
+${tls_cert}
+CERT
+cat > /etc/jupyterhub/ssl/key.pem <<'KEY'
+${tls_key}
+KEY
+chmod 600 /etc/jupyterhub/ssl/key.pem
+
+cat > /etc/jupyterhub/jupyterhub_config.py <<'CONFIG'
+c.JupyterHub.bind_url = "https://:443"
+c.JupyterHub.ssl_cert = "/etc/jupyterhub/ssl/cert.pem"
+c.JupyterHub.ssl_key = "/etc/jupyterhub/ssl/key.pem"
+
+c.Authenticator.allowed_users = {"ec2-user"}
+c.Authenticator.admin_users = {"ec2-user"}
+
+c.Spawner.default_url = "/lab"
+c.Spawner.cmd = ["/opt/jupyterhub/bin/jupyterhub-singleuser"]
+c.Spawner.environment = {
+    "SGE_ROOT": "/opt/ocs",
+    "SGE_CELL": "default",
+    "SGE_CLUSTER_NAME": "p6444",
+}
+CONFIG
+
+cat > /etc/systemd/system/jupyterhub.service <<'UNIT'
+[Unit]
+Description=JupyterHub
+After=network-online.target remote-fs.target
+Wants=network-online.target
+RequiresMountsFor=/home /opt/ocs
+
+[Service]
+User=root
+WorkingDirectory=/etc/jupyterhub
+Environment=PATH=/opt/jupyterhub/bin:/usr/local/bin:/opt/ocs/bin/lx-amd64:/usr/bin:/bin:/usr/sbin:/sbin
+ExecStart=/opt/jupyterhub/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now jupyterhub
