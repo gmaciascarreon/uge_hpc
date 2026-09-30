@@ -36,14 +36,17 @@ echo 'ec2-user:${password}' | chpasswd
 set -x
 
 # --- JupyterHub + JupyterLab + VS Code (code-server) ---
+# The Hub and its proxy run here; the user servers run as Grid Engine jobs on
+# the workers, so the Python environment and code-server are installed on the
+# NFS share /opt/apps where every node can use them.
 npm install -g configurable-http-proxy
 
-python3.11 -m venv /opt/jupyterhub
-/opt/jupyterhub/bin/pip install --upgrade pip
-/opt/jupyterhub/bin/pip install jupyterhub jupyterlab notebook \
+python3.11 -m venv /opt/apps/jupyter
+/opt/apps/jupyter/bin/pip install --upgrade pip
+/opt/apps/jupyter/bin/pip install jupyterhub jupyterlab notebook \
   jupyter-server-proxy jupyter-vscode-proxy
 
-curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix=/usr/local
+curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix=/opt/apps/code-server
 
 mkdir -p /etc/jupyterhub/ssl
 cat > /etc/jupyterhub/ssl/cert.pem <<'CERT'
@@ -68,10 +71,10 @@ RequiresMountsFor=/home /opt/ocs /opt/apps
 [Service]
 User=root
 WorkingDirectory=/etc/jupyterhub
-Environment=PATH=/opt/jupyterhub/bin:/usr/local/bin:/opt/ocs/bin/lx-amd64:/usr/bin:/bin:/usr/sbin:/sbin
+Environment=PATH=/opt/apps/jupyter/bin:/usr/local/bin:/opt/ocs/bin/lx-amd64:/usr/bin:/bin:/usr/sbin:/sbin
 Environment=JUPYTERHUB_PUBLIC_IP=${public_ip}
 Environment=VSCODE_MAX_SESSIONS=${max_sessions}
-ExecStart=/opt/jupyterhub/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
+ExecStart=/opt/apps/jupyter/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
 Restart=on-failure
 
 [Install]

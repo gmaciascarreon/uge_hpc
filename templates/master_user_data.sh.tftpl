@@ -118,6 +118,28 @@ CENTRY
 qconf -Ace /tmp/vscode.centry
 qconf -mattr exechost complex_values vscode=${max_sessions} global
 
+# Queue for JupyterHub sessions (JupyterLab and VS Code jobs). Interactive
+# sessions are mostly idle, so it has ${max_sessions} slots per worker on top of
+# all.q. The FORCED "interactive" complex keeps batch jobs out of it: only jobs
+# requesting -l interactive=true (the Hub's) can run there.
+cat > /tmp/interactive.centry <<'CENTRY'
+name        interactive
+shortcut    inter
+type        BOOL
+relop       ==
+requestable FORCED
+consumable  NO
+default     FALSE
+urgency     0
+CENTRY
+qconf -Ace /tmp/interactive.centry
+qconf -sq all.q | sed \
+  -e 's/^qname .*/qname                 interactive.q/' \
+  -e 's/^slots .*/slots                 ${max_sessions}/' \
+  -e 's/^complex_values .*/complex_values        interactive=TRUE/' \
+  > /tmp/interactive.q
+qconf -Aq /tmp/interactive.q
+
 # --- Shared application scripts (/opt/apps) ---
 mkdir -p /opt/apps/vscode-remote/slots
 chmod 1777 /opt/apps/vscode-remote/slots
@@ -129,6 +151,11 @@ cat > /opt/apps/vscode-remote/connect.sh <<'CONNECT'
 ${connect_sh}
 CONNECT
 chmod 755 /opt/apps/vscode-remote/session.sh /opt/apps/vscode-remote/connect.sh
+mkdir -p /opt/apps/jupyterhub
+cat > /opt/apps/jupyterhub/job.sh <<'JOB'
+${job_sh}
+JOB
+chmod 755 /opt/apps/jupyterhub/job.sh
 install -d -o ec2-user -g ec2-user /home/ec2-user/vscode-remote
 
 # --- Share SGE_ROOT, /home and /opt/apps with the other nodes ---

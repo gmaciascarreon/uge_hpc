@@ -10,7 +10,8 @@ cat >> /etc/hosts <<'HOSTS'
 ${hosts_entries}
 HOSTS
 
-dnf install -y nfs-utils libtirpc tar which hostname git gcc
+# python3.11: interpreter of the shared JupyterHub environment in /opt/apps/jupyter
+dnf install -y nfs-utils libtirpc tar which hostname git gcc python3.11
 
 # --- Mount SGE_ROOT and /home from the master (retry until it exports them) ---
 mkdir -p $SGE_ROOT /opt/apps

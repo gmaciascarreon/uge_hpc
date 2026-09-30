@@ -1,9 +1,10 @@
 #!/bin/bash
-#$ -S /bin/bash
-# VS Code Remote session. Runs as a Grid Engine job on a worker node:
-# claims one of the session slots, then runs a user-mode sshd on port
-# 22000+N. The gateway on the jupyter node forwards public port 2200+N to it,
-# and the local VS Code (Remote-SSH) connects through that port.
+# Remote-SSH endpoint of a VS Code session. Started by job.sh inside the
+# session's Grid Engine job on a worker node: claims one of the session
+# slots, then runs a user-mode sshd on port 22000+N. The gateway on the
+# jupyter node forwards public port 2200+N to it, and the local VS Code
+# (Remote-SSH) connects through that port. If VSCODE_INFO_FILE is set, the
+# connection details are written there (code-server opens that file).
 set -euo pipefail
 
 # Jobs don't get a login PATH; load the Grid Engine environment (qstat).
@@ -62,6 +63,7 @@ cleanup() {
 RUN_DIR=${TMPDIR:-/tmp}/vscode-remote-$JOB_ID
 mkdir -p "$RUN_DIR" "$STATE_DIR"
 trap cleanup EXIT
+trap 'exit 143' TERM INT
 
 # One host key in the shared home: the same key for every session and node,
 # so the local known_hosts entry stays valid across sessions.
@@ -91,5 +93,41 @@ EOF
 echo "$(hostname) $PORT $JOB_ID" > "$SLOTS_DIR/.$SLOT.tmp.$JOB_ID"
 mv "$SLOTS_DIR/.$SLOT.tmp.$JOB_ID" "$SLOTS_DIR/$SLOT"
 
-echo "VS Code Remote session: slot $SLOT, $(hostname):$PORT, public port $((2200 + SLOT))"
+PUBLIC_PORT=$((2200 + SLOT))
+SESSION_USER=$(id -un)
+echo "VS Code Remote session: slot $SLOT, $(hostname):$PORT, public port $PUBLIC_PORT"
+
+if [ -n "${VSCODE_INFO_FILE:-}" ]; then
+  cat > "$VSCODE_INFO_FILE" <<EOF
+# VS Code session $SLOT
+
+This VS Code runs as Grid Engine job **$JOB_ID** on **$(hostname)**.
+
+## Connect from your local VS Code (Remote-SSH)
+
+| | |
+|---|---|
+| Address | \`${VSCODE_PUBLIC_IP:-<jupyterhub public ip>}:$PUBLIC_PORT\` |
+| User | \`$SESSION_USER\` |
+
+1. Install the **Remote - SSH** extension in your local VS Code.
+2. Add this to your local \`~/.ssh/config\`:
+
+   \`\`\`
+   Host hpc-vscode-$SLOT
+     HostName ${VSCODE_PUBLIC_IP:-<jupyterhub public ip>}
+     Port $PUBLIC_PORT
+     User $SESSION_USER
+     IdentityFile ~/.ssh/uge_hpc
+   \`\`\`
+
+3. Run **Remote-SSH: Connect to Host...** and pick \`hpc-vscode-$SLOT\`.
+
+Test from a local terminal: \`ssh hpc-vscode-$SLOT hostname\` prints \`$(hostname)\`.
+
+The session ends when you stop this server in the Hub Control Panel
+(\`https://${VSCODE_PUBLIC_IP:-<jupyterhub public ip>}/hub/home\`), which deletes the job.
+EOF
+fi
+
 /usr/sbin/sshd -D -e -f "$RUN_DIR/sshd_config"

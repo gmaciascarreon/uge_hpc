@@ -72,7 +72,9 @@ resource "aws_instance" "master" {
     volume_size = 30
   }
 
-  user_data = templatefile("${path.module}/templates/master_user_data.sh.tftpl", {
+  # gzip keeps the script (which embeds the shared scripts) under the 16 KB
+  # user_data limit; cloud-init decompresses it.
+  user_data_base64 = base64gzip(templatefile("${path.module}/templates/master_user_data.sh.tftpl", {
     hosts_entries = local.hosts_entries
     subnet_cidr   = var.public_subnet_cidr
     ocs_version   = var.ocs_version
@@ -83,7 +85,8 @@ resource "aws_instance" "master" {
     max_sessions  = var.vscode_remote_max_sessions
     session_sh    = file("${path.module}/files/vscode-remote/session.sh")
     connect_sh    = file("${path.module}/files/vscode-remote/connect.sh")
-  })
+    job_sh        = file("${path.module}/files/jupyterhub/job.sh")
+  }))
 
   tags = {
     Name = "master"

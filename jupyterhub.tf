@@ -88,7 +88,9 @@ resource "aws_instance" "jupyterhub" {
     volume_size = 30
   }
 
-  user_data = templatefile("${path.module}/templates/jupyterhub_user_data.sh.tftpl", {
+  # gzip keeps the script (which embeds the Hub config) under the 16 KB
+  # user_data limit; cloud-init decompresses it.
+  user_data_base64 = base64gzip(templatefile("${path.module}/templates/jupyterhub_user_data.sh.tftpl", {
     hosts_entries     = local.hosts_entries
     password          = random_password.jupyterhub.result
     tls_cert          = tls_self_signed_cert.jupyterhub.cert_pem
@@ -96,7 +98,7 @@ resource "aws_instance" "jupyterhub" {
     public_ip         = aws_eip.jupyterhub.public_ip
     max_sessions      = var.vscode_remote_max_sessions
     jupyterhub_config = file("${path.module}/files/jupyterhub_config.py")
-  })
+  }))
 
   tags = {
     Name = "jupyter"
