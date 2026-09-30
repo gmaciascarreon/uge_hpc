@@ -1,0 +1,109 @@
+#!/bin/bash
+set -exo pipefail
+
+SGE_ROOT=/opt/ocs
+OCS_VERSION=${ocs_version}
+OCS_URL=https://open.clusterscheduler.io/download/ocs-$OCS_VERSION
+WORKERS="${worker_names}"
+
+# --- Hostname resolution (Grid Engine needs consistent names on every node) ---
+hostnamectl set-hostname master
+echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
+cat >> /etc/hosts <<'HOSTS'
+${hosts_entries}
+HOSTS
+
+dnf install -y nfs-utils libtirpc tar which hostname
+
+# --- Passwordless SSH for ec2-user (home is NFS-shared with the workers) ---
+mkdir -p /home/ec2-user/.ssh
+cat > /home/ec2-user/.ssh/id_rsa <<'KEY'
+${private_key}
+KEY
+echo "${public_key}" > /home/ec2-user/.ssh/id_rsa.pub
+echo "${public_key}" >> /home/ec2-user/.ssh/authorized_keys
+cat > /home/ec2-user/.ssh/config <<'CFG'
+Host master node*
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+  LogLevel ERROR
+CFG
+chmod 700 /home/ec2-user/.ssh
+chmod 600 /home/ec2-user/.ssh/id_rsa /home/ec2-user/.ssh/authorized_keys /home/ec2-user/.ssh/config
+chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+
+# --- Download and unpack Open Cluster Scheduler (prebuilt binaries) ---
+mkdir -p $SGE_ROOT /tmp/ocs_downloads
+cd /tmp/ocs_downloads
+for pkg in bin-lx-amd64 common doc; do
+  curl -fsSL -o ocs-$OCS_VERSION-$pkg.tar.gz $OCS_URL/ocs-$OCS_VERSION-$pkg.tar.gz
+  tar xpf ocs-$OCS_VERSION-$pkg.tar.gz -C $SGE_ROOT
+done
+
+# Accept kernels newer than 6.x in the arch detection script (same fix as the
+# upstream quickinstall script).
+sed -i 's/2\.4\.\*|2\.6\.\*|3\.\*|4\.\*|5\.\*|6\.\*)/2.4.*|2.6.*|[3-9].*)/' $SGE_ROOT/util/arch
+
+# --- Autoinstall template (also read by the workers from the shared SGE_ROOT) ---
+cat > $SGE_ROOT/autoinstall.template <<TEMPLATE
+SGE_ROOT="$SGE_ROOT"
+SGE_QMASTER_PORT="6444"
+SGE_EXECD_PORT="6445"
+SGE_ENABLE_SMF="false"
+SGE_CLUSTER_NAME="p6444"
+CELL_NAME="default"
+ADMIN_USER="root"
+QMASTER_SPOOL_DIR="$SGE_ROOT/default/spool/qmaster"
+EXECD_SPOOL_DIR="$SGE_ROOT/default/spool"
+GID_RANGE="20000-20200"
+SPOOLING_METHOD="classic"
+DB_SPOOLING_DIR="$SGE_ROOT/default/spool/bdb"
+PAR_EXECD_INST_COUNT="20"
+ADMIN_HOST_LIST="master $WORKERS"
+SUBMIT_HOST_LIST="master $WORKERS"
+EXEC_HOST_LIST="$WORKERS"
+EXECD_SPOOL_DIR_LOCAL="/var/spool/ocs"
+HOSTNAME_RESOLVING="true"
+SHELL_NAME="ssh"
+COPY_COMMAND="scp"
+DEFAULT_DOMAIN="none"
+ADMIN_MAIL="none"
+ADD_TO_RC="true"
+SET_FILE_PERMS="true"
+RESCHEDULE_JOBS="wait"
+SCHEDD_CONF="1"
+SHADOW_HOST=""
+EXEC_HOST_LIST_RM=""
+REMOVE_RC="false"
+CSP_RECREATE="true"
+CSP_COPY_CERTS="false"
+CSP_COUNTRY_CODE="US"
+CSP_STATE="State"
+CSP_LOCATION="Building"
+CSP_ORGA="Organisation"
+CSP_ORGA_UNIT="Organisation_unit"
+CSP_MAIL_ADDRESS="none@example.com"
+TEMPLATE
+
+# --- Install qmaster only (execution daemons are installed by the workers) ---
+# The installer writes rc scripts; recent distros no longer ship these dirs.
+mkdir -p /etc/rc.d/rc3.d /etc/rc.d/init.d
+cd $SGE_ROOT
+export LD_LIBRARY_PATH=""
+./inst_sge -m -auto $SGE_ROOT/autoinstall.template || true
+test -f $SGE_ROOT/default/common/settings.sh
+
+echo ". $SGE_ROOT/default/common/settings.sh" > /etc/profile.d/ocs.sh
+. $SGE_ROOT/default/common/settings.sh
+
+qconf -am ec2-user
+
+# --- Share SGE_ROOT and /home with the workers ---
+# Exported only after qmaster is installed, so the workers (which wait for
+# settings.sh on the share) never start their execd install too early.
+cat > /etc/exports <<EXPORTS
+$SGE_ROOT ${subnet_cidr}(rw,sync,no_root_squash,no_subtree_check)
+/home ${subnet_cidr}(rw,sync,no_root_squash,no_subtree_check)
+EXPORTS
+systemctl enable --now nfs-server
+exportfs -ra

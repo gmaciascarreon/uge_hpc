@@ -1,0 +1,46 @@
+#!/bin/bash
+set -exo pipefail
+
+SGE_ROOT=/opt/ocs
+
+# --- Hostname resolution (Grid Engine needs consistent names on every node) ---
+hostnamectl set-hostname ${hostname}
+echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
+cat >> /etc/hosts <<'HOSTS'
+${hosts_entries}
+HOSTS
+
+dnf install -y nfs-utils libtirpc tar which hostname
+
+# --- Mount SGE_ROOT and /home from the master (retry until it exports them) ---
+mkdir -p $SGE_ROOT
+cat >> /etc/fstab <<FSTAB
+master:$SGE_ROOT $SGE_ROOT nfs defaults,_netdev,nofail 0 0
+master:/home /home nfs defaults,_netdev,nofail 0 0
+FSTAB
+systemctl daemon-reload
+
+until mountpoint -q $SGE_ROOT; do mount $SGE_ROOT || sleep 15; done
+until mountpoint -q /home; do mount /home || sleep 15; done
+
+# --- Wait until qmaster is up and accepting requests ---
+until [ -f $SGE_ROOT/default/common/settings.sh ] &&
+  (. $SGE_ROOT/default/common/settings.sh && qconf -sh) >/dev/null 2>&1; do
+  sleep 15
+done
+
+# --- Install the execution daemon on this host only ---
+mkdir -p /etc/rc.d/rc3.d /etc/rc.d/init.d /var/spool/ocs
+cd $SGE_ROOT
+export LD_LIBRARY_PATH=""
+./inst_sge -x -noremote -auto $SGE_ROOT/autoinstall.template || true
+
+echo ". $SGE_ROOT/default/common/settings.sh" > /etc/profile.d/ocs.sh
+. $SGE_ROOT/default/common/settings.sh
+
+# Make sure this host is in the default queue with one slot per vCPU
+# (no-ops if the installer already did it).
+qconf -aattr hostgroup hostlist "$(hostname)" @allhosts || true
+qconf -mattr queue slots "$(nproc)" "all.q@$(hostname)" || true
+
+qconf -sel | grep -qx "$(hostname)"
