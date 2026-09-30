@@ -43,6 +43,11 @@ output "jupyterhub_password" {
   sensitive   = true
 }
 
+output "vscode_remote_ports" {
+  description = "Public address of each VS Code Remote session slot (session N -> port 2200+N)"
+  value       = [for n in range(1, var.vscode_remote_max_sessions + 1) : "${aws_eip.jupyterhub.public_ip}:${2200 + n}"]
+}
+
 output "cluster_ssh_private_key" {
   description = "Private key ec2-user uses for SSH between cluster nodes (already installed in the shared home directory; kept here as a backup)"
   value       = tls_private_key.cluster.private_key_openssh

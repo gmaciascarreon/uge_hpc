@@ -12,18 +12,20 @@ ${hosts_entries}
 HOSTS
 
 dnf install -y nfs-utils libtirpc tar which hostname git gcc \
-  python3.11 python3.11-pip nodejs npm
+  python3.11 python3.11-pip nodejs npm socat
 
-# --- Mount SGE_ROOT and /home from the master (retry until it exports them) ---
-mkdir -p $SGE_ROOT
+# --- Mount SGE_ROOT, /home and /opt/apps from the master (retry until exported) ---
+mkdir -p $SGE_ROOT /opt/apps
 cat >> /etc/fstab <<FSTAB
 master:$SGE_ROOT $SGE_ROOT nfs defaults,_netdev,nofail 0 0
 master:/home /home nfs defaults,_netdev,nofail 0 0
+master:/opt/apps /opt/apps nfs defaults,_netdev,nofail 0 0
 FSTAB
 systemctl daemon-reload
 
 until mountpoint -q $SGE_ROOT; do mount $SGE_ROOT || sleep 15; done
 until mountpoint -q /home; do mount /home || sleep 15; done
+until mountpoint -q /opt/apps; do mount /opt/apps || sleep 15; done
 
 # Grid Engine client environment (this host is a submit host)
 echo ". $SGE_ROOT/default/common/settings.sh" > /etc/profile.d/ocs.sh
@@ -53,20 +55,7 @@ KEY
 chmod 600 /etc/jupyterhub/ssl/key.pem
 
 cat > /etc/jupyterhub/jupyterhub_config.py <<'CONFIG'
-c.JupyterHub.bind_url = "https://:443"
-c.JupyterHub.ssl_cert = "/etc/jupyterhub/ssl/cert.pem"
-c.JupyterHub.ssl_key = "/etc/jupyterhub/ssl/key.pem"
-
-c.Authenticator.allowed_users = {"ec2-user"}
-c.Authenticator.admin_users = {"ec2-user"}
-
-c.Spawner.default_url = "/lab"
-c.Spawner.cmd = ["/opt/jupyterhub/bin/jupyterhub-singleuser"]
-c.Spawner.environment = {
-    "SGE_ROOT": "/opt/ocs",
-    "SGE_CELL": "default",
-    "SGE_CLUSTER_NAME": "p6444",
-}
+${jupyterhub_config}
 CONFIG
 
 cat > /etc/systemd/system/jupyterhub.service <<'UNIT'
@@ -74,12 +63,14 @@ cat > /etc/systemd/system/jupyterhub.service <<'UNIT'
 Description=JupyterHub
 After=network-online.target remote-fs.target
 Wants=network-online.target
-RequiresMountsFor=/home /opt/ocs
+RequiresMountsFor=/home /opt/ocs /opt/apps
 
 [Service]
 User=root
 WorkingDirectory=/etc/jupyterhub
 Environment=PATH=/opt/jupyterhub/bin:/usr/local/bin:/opt/ocs/bin/lx-amd64:/usr/bin:/bin:/usr/sbin:/sbin
+Environment=JUPYTERHUB_PUBLIC_IP=${public_ip}
+Environment=VSCODE_MAX_SESSIONS=${max_sessions}
 ExecStart=/opt/jupyterhub/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
 Restart=on-failure
 
@@ -87,5 +78,30 @@ Restart=on-failure
 WantedBy=multi-user.target
 UNIT
 
+# --- VS Code Remote gateway: public port 2200+N -> the worker running session N ---
+cat > /usr/local/bin/vscode-gw <<'GW'
+#!/bin/bash
+exec socat TCP-LISTEN:$((2200 + $1)),fork,reuseaddr EXEC:"/opt/apps/vscode-remote/connect.sh $1"
+GW
+chmod 755 /usr/local/bin/vscode-gw
+
+cat > /etc/systemd/system/vscode-gw@.service <<'UNIT'
+[Unit]
+Description=VS Code Remote gateway for session %i
+After=network-online.target remote-fs.target
+RequiresMountsFor=/opt/apps
+
+[Service]
+User=nobody
+ExecStart=/usr/local/bin/vscode-gw %i
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 systemctl daemon-reload
 systemctl enable --now jupyterhub
+for n in $(seq 1 ${max_sessions}); do
+  systemctl enable --now vscode-gw@$n
+done

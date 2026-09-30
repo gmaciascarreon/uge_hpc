@@ -57,6 +57,23 @@ variable "jupyterhub_allowed_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "vscode_remote_max_sessions" {
+  description = "Maximum concurrent VS Code Remote sessions (Grid Engine jobs). Session N is reached on public port 2200+N."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.vscode_remote_max_sessions >= 1 && var.vscode_remote_max_sessions <= 99
+    error_message = "vscode_remote_max_sessions must be between 1 and 99."
+  }
+}
+
+variable "vscode_ssh_public_key" {
+  description = "Optional SSH public key of your local machine (e.g. contents of ~/.ssh/id_ed25519.pub) allowed to connect to VS Code Remote sessions. If empty, use the cluster_ssh_private_key output."
+  type        = string
+  default     = ""
+}
+
 variable "ocs_version" {
   description = "Open Cluster Scheduler release to install (prebuilt packages from open.clusterscheduler.io, 9.1.6 or newer)"
   type        = string

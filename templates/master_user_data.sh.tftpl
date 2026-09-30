@@ -22,6 +22,11 @@ ${private_key}
 KEY
 echo "${public_key}" > /home/ec2-user/.ssh/id_rsa.pub
 echo "${public_key}" >> /home/ec2-user/.ssh/authorized_keys
+# Optional key of the user's local machine, for VS Code Remote sessions
+VSCODE_KEY="${vscode_key}"
+if [ -n "$VSCODE_KEY" ]; then
+  echo "$VSCODE_KEY" >> /home/ec2-user/.ssh/authorized_keys
+fi
 cat > /home/ec2-user/.ssh/config <<'CFG'
 Host master node*
   StrictHostKeyChecking no
@@ -98,12 +103,41 @@ echo ". $SGE_ROOT/default/common/settings.sh" > /etc/profile.d/ocs.sh
 
 qconf -am ec2-user
 
-# --- Share SGE_ROOT and /home with the workers ---
+# Global consumable limiting concurrent VS Code Remote sessions: each session
+# job requests -l vscode=1.
+cat > /tmp/vscode.centry <<'CENTRY'
+name        vscode
+shortcut    vscode
+type        INT
+relop       <=
+requestable YES
+consumable  YES
+default     0
+urgency     0
+CENTRY
+qconf -Ace /tmp/vscode.centry
+qconf -mattr exechost complex_values vscode=${max_sessions} global
+
+# --- Shared application scripts (/opt/apps) ---
+mkdir -p /opt/apps/vscode-remote/slots
+chmod 1777 /opt/apps/vscode-remote/slots
+echo "${max_sessions}" > /opt/apps/vscode-remote/max_sessions
+cat > /opt/apps/vscode-remote/session.sh <<'SESSION'
+${session_sh}
+SESSION
+cat > /opt/apps/vscode-remote/connect.sh <<'CONNECT'
+${connect_sh}
+CONNECT
+chmod 755 /opt/apps/vscode-remote/session.sh /opt/apps/vscode-remote/connect.sh
+install -d -o ec2-user -g ec2-user /home/ec2-user/vscode-remote
+
+# --- Share SGE_ROOT, /home and /opt/apps with the other nodes ---
 # Exported only after qmaster is installed, so the workers (which wait for
 # settings.sh on the share) never start their execd install too early.
 cat > /etc/exports <<EXPORTS
 $SGE_ROOT ${subnet_cidr}(rw,sync,no_root_squash,no_subtree_check)
 /home ${subnet_cidr}(rw,sync,no_root_squash,no_subtree_check)
+/opt/apps ${subnet_cidr}(rw,sync,no_root_squash,no_subtree_check)
 EXPORTS
 systemctl enable --now nfs-server
 exportfs -ra

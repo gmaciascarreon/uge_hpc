@@ -15,6 +15,14 @@ resource "aws_security_group" "jupyterhub" {
     cidr_blocks = var.jupyterhub_allowed_cidrs
   }
 
+  ingress {
+    description = "VS Code Remote sessions (SSH), one port per session: 2200+N"
+    from_port   = 2201
+    to_port     = 2200 + var.vscode_remote_max_sessions
+    protocol    = "tcp"
+    cidr_blocks = var.jupyterhub_allowed_cidrs
+  }
+
   tags = {
     Name = "${var.project_name}-jupyterhub-sg"
   }
@@ -81,10 +89,13 @@ resource "aws_instance" "jupyterhub" {
   }
 
   user_data = templatefile("${path.module}/templates/jupyterhub_user_data.sh.tftpl", {
-    hosts_entries = local.hosts_entries
-    password      = random_password.jupyterhub.result
-    tls_cert      = tls_self_signed_cert.jupyterhub.cert_pem
-    tls_key       = tls_private_key.jupyterhub.private_key_pem
+    hosts_entries     = local.hosts_entries
+    password          = random_password.jupyterhub.result
+    tls_cert          = tls_self_signed_cert.jupyterhub.cert_pem
+    tls_key           = tls_private_key.jupyterhub.private_key_pem
+    public_ip         = aws_eip.jupyterhub.public_ip
+    max_sessions      = var.vscode_remote_max_sessions
+    jupyterhub_config = file("${path.module}/files/jupyterhub_config.py")
   })
 
   tags = {

@@ -79,6 +79,10 @@ resource "aws_instance" "master" {
     worker_names  = join(" ", keys(local.workers))
     private_key   = tls_private_key.cluster.private_key_openssh
     public_key    = tls_private_key.cluster.public_key_openssh
+    vscode_key    = var.vscode_ssh_public_key
+    max_sessions  = var.vscode_remote_max_sessions
+    session_sh    = file("${path.module}/files/vscode-remote/session.sh")
+    connect_sh    = file("${path.module}/files/vscode-remote/connect.sh")
   })
 
   tags = {

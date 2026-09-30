@@ -13,15 +13,17 @@ HOSTS
 dnf install -y nfs-utils libtirpc tar which hostname git gcc
 
 # --- Mount SGE_ROOT and /home from the master (retry until it exports them) ---
-mkdir -p $SGE_ROOT
+mkdir -p $SGE_ROOT /opt/apps
 cat >> /etc/fstab <<FSTAB
 master:$SGE_ROOT $SGE_ROOT nfs defaults,_netdev,nofail 0 0
 master:/home /home nfs defaults,_netdev,nofail 0 0
+master:/opt/apps /opt/apps nfs defaults,_netdev,nofail 0 0
 FSTAB
 systemctl daemon-reload
 
 until mountpoint -q $SGE_ROOT; do mount $SGE_ROOT || sleep 15; done
 until mountpoint -q /home; do mount /home || sleep 15; done
+until mountpoint -q /opt/apps; do mount /opt/apps || sleep 15; done
 
 # --- Wait until qmaster is up and accepting requests ---
 until [ -f $SGE_ROOT/default/common/settings.sh ] &&
